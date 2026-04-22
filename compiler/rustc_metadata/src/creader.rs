@@ -1,8 +1,13 @@
 //! Validates all used crates and extern libraries and loads their metadata
 
+// `Error`, `Duration`, and `try_canonicalize` feed the dlopen-based
+// proc-macro loader below; on wasm32 those helpers are cfg'd out, so gate
+// these imports to match and keep the build warning-free.
+#[cfg(not(target_arch = "wasm32"))]
 use std::error::Error;
 use std::path::Path;
 use std::str::FromStr;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 use std::{cmp, env, iter};
 
@@ -14,6 +19,7 @@ use rustc_data_structures::svh::Svh;
 use rustc_data_structures::sync::{self, FreezeReadGuard, FreezeWriteGuard};
 use rustc_data_structures::unord::UnordMap;
 use rustc_expand::base::SyntaxExtension;
+#[cfg(not(target_arch = "wasm32"))]
 use rustc_fs_util::try_canonicalize;
 use rustc_hir as hir;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE, LocalDefId, StableCrateId};
@@ -608,16 +614,24 @@ impl CStore {
         )?;
 
         let raw_proc_macros = if crate_root.is_proc_macro_crate() {
-            let temp_root;
-            let (dlsym_source, dlsym_root) = match &host_lib {
-                Some(host_lib) => (&host_lib.source, {
-                    temp_root = host_lib.metadata.get_root();
-                    &temp_root
-                }),
-                None => (&source, &crate_root),
-            };
-            let dlsym_dylib = dlsym_source.dylib.as_ref().expect("no dylib for a proc-macro crate");
-            Some(self.dlsym_proc_macros(tcx.sess, dlsym_dylib, dlsym_root.stable_crate_id())?)
+            // verus-explorer: before dlsym, consult the in-process registry so
+            // that rustc-in-wasm (no dlopen) can resolve statically-linked
+            // proc-macro crates. The registry is keyed by crate name.
+            if let Some(macros) = crate::proc_macro_registry::lookup(crate_root.name().as_str()) {
+                Some(macros)
+            } else {
+                let temp_root;
+                let (dlsym_source, dlsym_root) = match &host_lib {
+                    Some(host_lib) => (&host_lib.source, {
+                        temp_root = host_lib.metadata.get_root();
+                        &temp_root
+                    }),
+                    None => (&source, &crate_root),
+                };
+                let dlsym_dylib =
+                    dlsym_source.dylib.as_ref().expect("no dylib for a proc-macro crate");
+                Some(self.dlsym_proc_macros(tcx.sess, dlsym_dylib, dlsym_root.stable_crate_id())?)
+            }
         } else {
             None
         };
@@ -1360,10 +1374,12 @@ fn fn_spans(krate: &ast::Crate, name: Symbol) -> Vec<Span> {
     f.spans
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn format_dlopen_err(e: &(dyn std::error::Error + 'static)) -> String {
     e.sources().map(|e| format!(": {e}")).collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn attempt_load_dylib(path: &Path) -> Result<libloading::Library, libloading::Error> {
     #[cfg(target_os = "aix")]
     if let Some(ext) = path.extension()
@@ -1391,6 +1407,7 @@ fn attempt_load_dylib(path: &Path) -> Result<libloading::Library, libloading::Er
 // proc-macro DLL with `Error::LoadLibraryExW`. It is suspected that something in the
 // system still holds a lock on the file, so we retry a few times before calling it
 // an error.
+#[cfg(not(target_arch = "wasm32"))]
 fn load_dylib(path: &Path, max_attempts: usize) -> Result<libloading::Library, String> {
     assert!(max_attempts > 0);
 
@@ -1454,6 +1471,7 @@ impl From<DylibError> for CrateError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub unsafe fn load_symbol_from_dylib<T: Copy>(
     path: &Path,
     sym_name: &str,
@@ -1472,4 +1490,19 @@ pub unsafe fn load_symbol_from_dylib<T: Copy>(
     std::mem::forget(lib);
 
     Ok(*sym)
+}
+
+// verus-explorer: wasm32-unknown-unknown has no dlopen/dlsym — we can't load
+// proc-macro dylibs in the browser. Proc-macro expansion must happen
+// server-side; this stub ensures rustc_metadata compiles, and callers on the
+// wasm path never actually hit this (if they do, it surfaces as a clean error).
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn load_symbol_from_dylib<T: Copy>(
+    path: &Path,
+    _sym_name: &str,
+) -> Result<T, DylibError> {
+    Err(DylibError::DlOpen(
+        path.display().to_string(),
+        "dlopen is not supported on wasm32-unknown-unknown".to_string(),
+    ))
 }

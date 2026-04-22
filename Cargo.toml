@@ -93,3 +93,12 @@ codegen-units = 1
 # For git dependencies, also add your source to ALLOWED_SOURCES in src/tools/tidy/src/extdeps.rs.
 #[patch.crates-io]
 
+# Several vendored proc-macro Cargo.tomls under compiler/ carry
+# `[lints] workspace = true` so their `cfg(bootstrap)` declaration is inherited
+# when the verus-explorer workspace builds them as host proc-macro deps. When
+# x.py (this workspace) builds the full compiler, `[workspace.lints]` must also
+# resolve here — otherwise cargo errors out with "workspace.lints was not
+# defined". Keep in sync with `verus-explorer/Cargo.toml`.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bootstrap)'] }
+

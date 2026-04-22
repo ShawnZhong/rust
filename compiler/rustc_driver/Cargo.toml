@@ -4,7 +4,11 @@ version = "0.0.0"
 edition = "2024"
 
 [lib]
-crate-type = ["dylib"]
+# Upstream ships both so host rustc can dlopen the dylib and downstream
+# rustc_private consumers (clippy-driver, rust_verify, etc.) can link
+# against it. wasm32 silently drops the dylib variant — the target has
+# no dylib support, so the rlib is what the wasm explorer consumes.
+crate-type = ["rlib", "dylib"]
 
 [dependencies]
 # tidy-alphabetical-start

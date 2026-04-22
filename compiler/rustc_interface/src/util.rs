@@ -3,7 +3,10 @@ use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::{env, thread};
+use std::env;
+// verus-explorer: only used by the non-wasm `run_in_thread_*` variants.
+#[cfg(not(target_arch = "wasm32"))]
+use std::thread;
 
 use rustc_ast as ast;
 use rustc_attr_parsing::{ShouldEmit, validate_attr};
@@ -27,7 +30,11 @@ use rustc_session::{EarlyDiagCtxt, Session, filesearch, lint};
 use rustc_span::edit_distance::find_best_match_for_name;
 use rustc_span::edition::Edition;
 use rustc_span::source_map::SourceMapInputs;
-use rustc_span::{SessionGlobals, Symbol, sym};
+use rustc_span::{Symbol, sym};
+// verus-explorer: only the non-wasm `run_in_thread_pool_with_globals` uses
+// `SessionGlobals` (in its deadlock handler).
+#[cfg(not(target_arch = "wasm32"))]
+use rustc_span::SessionGlobals;
 use rustc_target::spec::Target;
 use tracing::info;
 
@@ -104,6 +111,10 @@ pub(crate) fn check_abi_required_features(sess: &Session) {
 pub static STACK_SIZE: OnceLock<usize> = OnceLock::new();
 pub const DEFAULT_STACK_SIZE: usize = 8 * 1024 * 1024;
 
+// verus-explorer: only the non-wasm variant of `run_in_thread_pool_with_globals`
+// (and `run_in_thread_with_globals`) consults this; on wasm32 the stack size
+// comes from the linker, not at runtime.
+#[cfg(not(target_arch = "wasm32"))]
 fn init_stack_size(early_dcx: &EarlyDiagCtxt) -> usize {
     // Obey the environment setting or default
     *STACK_SIZE.get_or_init(|| {
@@ -134,6 +145,8 @@ fn init_stack_size(early_dcx: &EarlyDiagCtxt) -> usize {
     })
 }
 
+// verus-explorer: only called from the non-wasm `run_in_thread_pool_with_globals`.
+#[cfg(not(target_arch = "wasm32"))]
 fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: Send>(
     thread_stack_size: usize,
     edition: Edition,
@@ -173,6 +186,36 @@ fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: 
     })
 }
 
+// verus-explorer: wasm32-unknown-unknown has no threads — both the
+// non-parallel `run_in_thread_with_globals` (which spawns a scoped thread
+// for stack-size and Send isolation) and the parallel `rustc_thread_pool`
+// path require working `thread::spawn`. Stack size is set at link time via
+// `-zstack-size` (see `.cargo/config.toml`); this variant runs `f` directly
+// on the current thread.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn run_in_thread_pool_with_globals<
+    F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send,
+    R: Send,
+>(
+    _thread_builder_diag: &EarlyDiagCtxt,
+    edition: Edition,
+    threads: usize,
+    extra_symbols: &[&'static str],
+    sm_inputs: SourceMapInputs,
+    f: F,
+) -> R {
+    // verus-explorer: `Registry::register` panics on re-entry; gate with `Once`
+    // because `run_compiler` is re-invoked across `parse_source` calls.
+    static REGISTER_ONCE: std::sync::Once = std::sync::Once::new();
+    REGISTER_ONCE.call_once(|| {
+        sync::Registry::new(std::num::NonZero::new(threads).unwrap()).register();
+    });
+    rustc_span::create_session_globals_then(edition, extra_symbols, Some(sm_inputs), || {
+        f(CurrentGcx::new(), Proxy::new())
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run_in_thread_pool_with_globals<
     F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send,
     R: Send,

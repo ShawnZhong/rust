@@ -108,6 +108,11 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// verus-explorer: gated to non-wasm — on wasm32 we use a SystemTime-derived
+// fallback below to avoid pulling `rand` → `getrandom` into the wasm dep
+// graph. Incremental compilation is never actually exercised in the wasm
+// build (no filesystem).
+#[cfg(not(target_arch = "wasm32"))]
 use rand::{RngCore, rng};
 use rustc_data_structures::base_n::{BaseNString, CASE_INSENSITIVE, ToBaseN};
 use rustc_data_structures::fx::{FxHashSet, FxIndexSet};
@@ -447,7 +452,13 @@ fn copy_files(sess: &Session, target_dir: &Path, source_dir: &Path) -> Result<bo
 fn generate_session_dir_path(crate_dir: &Path) -> PathBuf {
     let timestamp = timestamp_to_string(SystemTime::now());
     debug!("generate_session_dir_path: timestamp = {}", timestamp);
+    #[cfg(not(target_arch = "wasm32"))]
     let random_number = rng().next_u32();
+    // verus-explorer: subsec_nanos stand-in for `rand::rng().next_u32()` —
+    // see the use-statement note above for rationale.
+    #[cfg(target_arch = "wasm32")]
+    let random_number =
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
     debug!("generate_session_dir_path: random_number = {}", random_number);
 
     // Chop the first 3 characters off the timestamp. Those 3 bytes will be zero for a while.

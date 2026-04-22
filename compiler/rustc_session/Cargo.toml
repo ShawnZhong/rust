@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 # tidy-alphabetical-start
 getopts = "0.2"
-rand = "0.9.0"
 rustc_abi = { path = "../rustc_abi" }
 rustc_ast = { path = "../rustc_ast" }
 rustc_data_structures = { path = "../rustc_data_structures" }
@@ -29,6 +28,12 @@ tracing = "0.1"
 # tidy-alphabetical-start
 libc = "0.2"
 # tidy-alphabetical-end
+
+# verus-explorer: `rand` is target-conditional — see src/session.rs for the
+# wasm32 fallback. Used for the `invocation_temp` prefix on incremental-build
+# temp files; unused in the wasm build (no incremental, no fs).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rand = "0.9.0"
 
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.61.0"

@@ -2,6 +2,8 @@ use std::sync::{Arc, LazyLock, OnceLock};
 
 pub use jobserver_crate::{Acquired, Client, HelperThread};
 use jobserver_crate::{FromEnv, FromEnvErrorKind};
+// verus-explorer: only the non-wasm `Proxy` uses these.
+#[cfg(not(target_arch = "wasm32"))]
 use parking_lot::{Condvar, Mutex};
 
 // We can only call `from_env_ext` once per process
@@ -72,6 +74,7 @@ pub fn client() -> Client {
     GLOBAL_CLIENT_CHECKED.get().expect(ACCESS_ERROR).clone()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 struct ProxyData {
     /// The number of tokens assigned to threads.
     /// If this is 0, a single token is still assigned to this process, but is unused.
@@ -82,6 +85,7 @@ struct ProxyData {
 }
 
 /// This is a jobserver proxy used to ensure that we hold on to at least one token.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct Proxy {
     client: Client,
     data: Mutex<ProxyData>,
@@ -92,6 +96,7 @@ pub struct Proxy {
     helper: OnceLock<HelperThread>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Proxy {
     pub fn new() -> Arc<Self> {
         let proxy = Arc::new(Proxy {
@@ -161,4 +166,20 @@ impl Proxy {
             }
         }
     }
+}
+
+// verus-explorer: wasm32 has no threads — rustc compiles single-threaded and
+// query-cycle waits never fire, so jobserver token bookkeeping is dead. The
+// stub keeps the same public surface (`new` / `acquire_thread` / `release_thread`)
+// callers in `rustc_query_system::query::job` etc. expect.
+#[cfg(target_arch = "wasm32")]
+pub struct Proxy;
+
+#[cfg(target_arch = "wasm32")]
+impl Proxy {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Proxy)
+    }
+    pub fn acquire_thread(&self) {}
+    pub fn release_thread(&self) {}
 }

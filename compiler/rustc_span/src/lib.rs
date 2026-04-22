@@ -135,6 +135,11 @@ pub fn create_session_globals_then<R>(
     sm_inputs: Option<SourceMapInputs>,
     f: impl FnOnce() -> R,
 ) -> R {
+    // verus-explorer: assertion gated off on wasm32 — `panic=abort` skips RAII
+    // unwinding, so `scoped_tls`'s restore guard never runs and SESSION_GLOBALS
+    // stays set across `run_compiler` re-entries. We're single-threaded, so
+    // the stale pointer is harmless — `set` overwrites for the duration of f.
+    #[cfg(not(target_arch = "wasm32"))]
     assert!(
         !SESSION_GLOBALS.is_set(),
         "SESSION_GLOBALS should never be overwritten! \
@@ -145,6 +150,8 @@ pub fn create_session_globals_then<R>(
 }
 
 pub fn set_session_globals_then<R>(session_globals: &SessionGlobals, f: impl FnOnce() -> R) -> R {
+    // verus-explorer: see note in `create_session_globals_then`.
+    #[cfg(not(target_arch = "wasm32"))]
     assert!(
         !SESSION_GLOBALS.is_set(),
         "SESSION_GLOBALS should never be overwritten! \

@@ -715,7 +715,13 @@ impl<'a> CrateLocator<'a> {
             return None;
         }
 
-        if header.triple != self.tuple {
+        // verus-explorer: proc-macro crates are loaded via the in-process
+        // registry (see `proc_macro_registry`), not dlopen, so the dylib's
+        // triple is irrelevant. The bundled host rmeta carries its original
+        // host triple (e.g. aarch64-apple-darwin), which doesn't match
+        // rustc-in-wasm's `host_tuple()` of `wasm32-unknown-unknown`. Skip
+        // the triple check for proc-macros to let the host rmeta through.
+        if header.triple != self.tuple && !self.is_proc_macro {
             info!("Rejecting via crate triple: expected {} got {}", self.tuple, header.triple);
             crate_rejections.via_triple.push(CrateMismatch {
                 path: libpath.to_path_buf(),
@@ -820,7 +826,15 @@ fn get_metadata_section<'p>(
     cfg_version: &'static str,
     crate_name: Option<Symbol>,
 ) -> Result<MetadataBlob, MetadataError<'p>> {
-    if !filename.exists() {
+    // verus-explorer: on wasm32 there's no filesystem, so Path::exists always
+    // returns false. Accept virtual sysroot paths as existing (their bytes
+    // live in the embedded bundle, served via rustc_session::filesearch).
+    #[cfg(target_arch = "wasm32")]
+    let exists = filename.exists()
+        || rustc_session::filesearch::sysroot::read(filename).is_some();
+    #[cfg(not(target_arch = "wasm32"))]
+    let exists = filename.exists();
+    if !exists {
         return Err(MetadataError::NotPresent(filename));
     }
     let raw_bytes = match flavor {
@@ -932,6 +946,15 @@ fn get_metadata_section<'p>(
 }
 
 fn get_rmeta_metadata_section<'a, 'p>(filename: &'p Path) -> Result<OwnedSlice, MetadataError<'a>> {
+    // verus-explorer: on wasm32, rmeta bytes come from the embedded sysroot
+    // bundle via a registered callback in rustc_session::filesearch. No fs,
+    // no mmap. The bundled bytes are `&'static [u8]`, so we build an
+    // `OwnedSlice` that borrows from the static without owning anything.
+    #[cfg(target_arch = "wasm32")]
+    if let Some(bytes) = rustc_session::filesearch::sysroot::read(filename) {
+        return Ok(rustc_data_structures::owned_slice::slice_owned(bytes, |b| *b));
+    }
+
     // mmap the file, because only a small fraction of it is read.
     let file = std::fs::File::open(filename).map_err(|_| {
         MetadataError::LoadFailure(format!(

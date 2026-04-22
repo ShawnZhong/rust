@@ -1124,8 +1124,16 @@ impl<Cx: HasDataLayout> LayoutCalculator<Cx> {
             // If `-Z randomize-layout` was enabled for the type definition we can shuffle
             // the field ordering to try and catch some code making assumptions about layouts
             // we don't guarantee.
-            if repr.can_randomize_type_layout() && cfg!(feature = "randomize") {
-                #[cfg(feature = "randomize")]
+            // verus-explorer: added `not(target_arch = "wasm32")` gate — `rand`
+            // and `rand_xoshiro` are only deps on non-wasm targets (see
+            // Cargo.toml). The `randomize` feature is still in `default`, so
+            // the `cfg!(feature = "randomize")` branch would try to compile the
+            // rand-using code on wasm32 without those crates available.
+            if repr.can_randomize_type_layout()
+                && cfg!(feature = "randomize")
+                && cfg!(not(target_arch = "wasm32"))
+            {
+                #[cfg(all(feature = "randomize", not(target_arch = "wasm32")))]
                 {
                     use rand::SeedableRng;
                     use rand::seq::SliceRandom;

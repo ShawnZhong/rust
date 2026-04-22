@@ -26,6 +26,7 @@ pub mod creader;
 pub mod errors;
 pub mod fs;
 pub mod locator;
+pub mod proc_macro_registry;
 
 pub use creader::{DylibError, load_symbol_from_dylib};
 pub use fs::{METADATA_FILENAME, emit_wrapper_file};

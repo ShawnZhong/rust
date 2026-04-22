@@ -3,10 +3,44 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
+// Only the non-wasm `current_dll_path` paths consume this; on wasm32 there's
+// no dll to locate, so skip the import to keep the build warning-free.
+#[cfg(not(target_arch = "wasm32"))]
 use rustc_fs_util::try_canonicalize;
 use rustc_target::spec::Target;
 
 use crate::search_paths::{PathKind, SearchPath};
+
+// verus-explorer: on wasm32 there's no filesystem, so directory enumeration
+// (`SearchPath::new` in search_paths.rs) and metadata file reads
+// (`get_rmeta_metadata_section` in rustc_metadata::locator) can't hit real
+// files. Instead the wasm host registers a callback pair at startup that
+// serves rmeta bytes from an embedded bundle. No-op when no callbacks are
+// installed (the native filesystem path takes over).
+#[cfg(target_arch = "wasm32")]
+pub mod sysroot {
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+
+    pub struct Callbacks {
+        pub list: fn(&Path) -> Option<Vec<(String, PathBuf)>>,
+        pub read: fn(&Path) -> Option<&'static [u8]>,
+    }
+
+    static CALLBACKS: OnceLock<Callbacks> = OnceLock::new();
+
+    pub fn install(cb: Callbacks) {
+        let _ = CALLBACKS.set(cb);
+    }
+
+    pub fn list(dir: &Path) -> Option<Vec<(String, PathBuf)>> {
+        CALLBACKS.get().and_then(|cb| (cb.list)(dir))
+    }
+
+    pub fn read(path: &Path) -> Option<&'static [u8]> {
+        CALLBACKS.get().and_then(|cb| (cb.read)(path))
+    }
+}
 
 #[derive(Clone)]
 pub struct FileSearch {
@@ -187,6 +221,10 @@ fn current_dll_path() -> Result<PathBuf, String> {
 /// This function checks if sysroot is found using env::args().next(), and if it
 /// is not found, finds sysroot from current rustc_driver dll.
 pub(crate) fn default_sysroot() -> PathBuf {
+    // verus-explorer: wasm32 early-returns before the dll-based lookup, so
+    // this helper (and its `current_dll_path` dependency above) never run.
+    // Gating it out of the wasm32 build removes the `dead_code` warning.
+    #[cfg(not(target_arch = "wasm32"))]
     fn default_from_rustc_driver_dll() -> Result<PathBuf, String> {
         let dll = current_dll_path()?;
 
@@ -251,6 +289,15 @@ pub(crate) fn default_sysroot() -> PathBuf {
         rustlib_path.exists().then_some(p)
     }
 
+    // verus-explorer: on wasm32 there's no argv[0] symlink and no current_dll_path,
+    // so both lookups fail. The browser frontend never resolves sysroot-relative
+    // paths (no std, no proc-macros, no codegen), so return a dummy placeholder
+    // instead of panicking. Callers that actually need a sysroot must pass --sysroot.
+    #[cfg(target_arch = "wasm32")]
+    {
+        return from_env_args_next().unwrap_or_else(|| PathBuf::from("/virtual/sysroot"));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
     from_env_args_next()
         .unwrap_or_else(|| default_from_rustc_driver_dll().expect("Failed finding sysroot"))
 }

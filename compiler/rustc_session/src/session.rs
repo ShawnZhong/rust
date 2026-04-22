@@ -5,6 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::{env, io};
 
+// verus-explorer: `rand` is non-wasm only — `invocation_temp` (line ~1065)
+// uses a SystemTime-derived fallback on wasm32 to drop the rand → getrandom
+// dep chain. invocation_temp only fires when incremental is configured,
+// which the wasm rustc never is.
+#[cfg(not(target_arch = "wasm32"))]
 use rand::{RngCore, rng};
 use rustc_data_structures::base_n::{CASE_INSENSITIVE, ToBaseN};
 use rustc_data_structures::flock;
@@ -1061,10 +1066,16 @@ pub fn build_session(
         filesearch::FileSearch::new(&sopts.search_paths, &target_tlib_path, &target);
     let host_filesearch = filesearch::FileSearch::new(&sopts.search_paths, &host_tlib_path, &host);
 
-    let invocation_temp = sopts
-        .incremental
-        .as_ref()
-        .map(|_| rng().next_u32().to_base_fixed_len(CASE_INSENSITIVE).to_string());
+    let invocation_temp = sopts.incremental.as_ref().map(|_| {
+        #[cfg(not(target_arch = "wasm32"))]
+        let random_number = rng().next_u32();
+        #[cfg(target_arch = "wasm32")]
+        let random_number = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        random_number.to_base_fixed_len(CASE_INSENSITIVE).to_string()
+    });
 
     let timings = TimingSectionHandler::new(sopts.json_timings);
 

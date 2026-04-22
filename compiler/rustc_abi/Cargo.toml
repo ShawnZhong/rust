@@ -6,8 +6,6 @@ edition = "2024"
 [dependencies]
 # tidy-alphabetical-start
 bitflags = "2.4.1"
-rand = { version = "0.9.0", default-features = false, optional = true }
-rand_xoshiro = { version = "0.7.0", optional = true }
 rustc_data_structures = { path = "../rustc_data_structures", optional = true }
 rustc_error_messages = { path = "../rustc_error_messages", optional = true }
 rustc_hashes = { path = "../rustc_hashes" }
@@ -17,6 +15,16 @@ rustc_serialize = { path = "../rustc_serialize", optional = true }
 rustc_span = { path = "../rustc_span", optional = true }
 tracing = "0.1"
 # tidy-alphabetical-end
+
+# verus-explorer: `rand`/`rand_xoshiro` moved out of the unconditional
+# `[dependencies]` so they're not pulled into the wasm dep graph. The
+# `randomize` feature still activates them via `dep:rand`/`dep:rand_xoshiro`
+# on non-wasm builds; on wasm32 the feature's layout-randomization code at
+# src/layout.rs:1127 is cfg'd out by the feature gate itself (never
+# exercised — requires `-Z randomize-layout`).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rand = { version = "0.9.0", default-features = false, optional = true }
+rand_xoshiro = { version = "0.7.0", optional = true }
 
 [features]
 # tidy-alphabetical-start

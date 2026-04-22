@@ -1,4 +1,8 @@
-use std::ffi::{CString, OsStr};
+use std::ffi::OsStr;
+// `path_to_c_string` isn't compiled on wasm32 (no libc path to the C world),
+// so gate its one consumer — the `CString` import — to match.
+#[cfg(not(target_arch = "wasm32"))]
+use std::ffi::CString;
 use std::path::{Path, PathBuf, absolute};
 use std::{fs, io};
 

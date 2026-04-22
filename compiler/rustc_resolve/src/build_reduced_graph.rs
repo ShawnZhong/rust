@@ -211,7 +211,24 @@ impl<'ra, 'tcx> Resolver<'ra, 'tcx> {
                 let loaded_macro = self.cstore().load_macro_untracked(self.tcx, def_id);
                 let macro_data = match loaded_macro {
                     LoadedMacro::MacroDef { def, ident, attrs, span, edition } => {
-                        self.compile_macro(&def, ident, &attrs, span, ast::DUMMY_NODE_ID, edition)
+                        let mut md = self
+                            .compile_macro(&def, ident, &attrs, span, ast::DUMMY_NODE_ID, edition);
+                        // verus-explorer override: when the source crate is registered in
+                        // `rustc_metadata::proc_macro_registry`, swap the compiled empty-body
+                        // stub `SyntaxExtensionKind` for a real Bang/Attr/Derive wrapper around
+                        // the registered proc-macro client. The shim rmeta only exists so the
+                        // crate+macro names resolve; the stub body is never evaluated.
+                        let crate_name = self.tcx.crate_name(def_id.krate);
+                        if let Some(new_kind) =
+                            rustc_metadata::proc_macro_registry::lookup_syntax_extension_kind(
+                                crate_name.as_str(),
+                                ident.name.as_str(),
+                            )
+                            && let Some(ext_mut) = Arc::get_mut(&mut md.ext)
+                        {
+                            ext_mut.kind = new_kind;
+                        }
+                        md
                     }
                     LoadedMacro::ProcMacro(ext) => MacroData::new(Arc::new(ext)),
                 };

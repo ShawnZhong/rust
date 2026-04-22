@@ -131,6 +131,26 @@ impl SearchPath {
     }
 
     pub fn new(kind: PathKind, dir: PathBuf) -> Self {
+        // verus-explorer: on wasm32, route through the registered virtual
+        // sysroot callback before touching the real fs. If nothing is
+        // installed, or the dir isn't part of the virtual sysroot, we fall
+        // through to `fs::read_dir` which returns Err(Unsupported) → empty.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(virtual_entries) = crate::filesearch::sysroot::list(&dir) {
+            let mut files: Vec<_> = virtual_entries
+                .into_iter()
+                .map(|(name, path)| {
+                    let file_name_str: Arc<str> = name.into();
+                    (
+                        Arc::clone(&file_name_str),
+                        SearchPathFile { path: path.into(), file_name_str },
+                    )
+                })
+                .collect();
+            files.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+            return SearchPath { kind, dir, files: FilesIndex(files) };
+        }
+
         // Get the files within the directory.
         let mut files = match std::fs::read_dir(&dir) {
             Ok(files) => files

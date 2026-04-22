@@ -2732,8 +2732,14 @@ pub fn build_session_options(early_dcx: &mut EarlyDiagCtxt, matches: &getopts::M
     // Ideally we would use `SourceMap::working_dir` instead, but we don't have access to it
     // so we manually create the potentially-remapped working directory
     let working_dir = {
-        let working_dir = std::env::current_dir().unwrap_or_else(|e| {
-            early_dcx.early_fatal(format!("Current directory is invalid: {e}"));
+        // verus-explorer: wasm32 has no cwd (std returns Unsupported); callers
+        // pass absolute virtual paths, so the value is never meaningfully
+        // consulted — fall back to "/".
+        let working_dir = std::env::current_dir().unwrap_or_else(|_e| {
+            #[cfg(target_arch = "wasm32")]
+            { std::path::PathBuf::from("/") }
+            #[cfg(not(target_arch = "wasm32"))]
+            { early_dcx.early_fatal(format!("Current directory is invalid: {_e}")) }
         });
 
         let file_mapping = file_path_mapping(remap_path_prefix.clone(), &unstable_opts);
