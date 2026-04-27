@@ -29,6 +29,17 @@ directories = "6"
 bitflags = "2.6"
 serde_json = { version = "1.0", optional = true }
 
+# verus-explorer hosting: cargo doesn't see `extern crate rustc_*;` in
+# miri's source as deps, so without an ordering signal it schedules miri
+# in parallel with the rustc_* path deps `rustc-rlibs` builds. Depending
+# on `rustc-rlibs` here forces miri to compile after — by that point all
+# rustc_* rlibs are in `target/.../deps/`, picked up by the `-L` that
+# `scripts/rustc-wrapper.sh` injects on every wasm32 compile. Same trick
+# that verus's `mir_build` Cargo.toml uses. Wasm-only target gate keeps
+# miri's host x86_64 build path unaffected.
+[target.wasm32-unknown-unknown.dependencies]
+rustc-rlibs = { path = "../../../../../rustc-rlibs" }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # native-lib dependencies

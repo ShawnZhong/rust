@@ -277,13 +277,30 @@ impl FileDescription for io::Stdout {
         finish: DynMachineCallback<'tcx, Result<usize, IoError>>,
     ) -> InterpResult<'tcx> {
         // We allow writing to stdout even with isolation enabled.
-        let result = ecx.write_to_host(&*self, len, ptr)?;
-        // Stdout is buffered, flush to make sure it appears on the
-        // screen.  This is the write() syscall of the interpreted
-        // program, we want it to correspond to a write() syscall on
-        // the host -- there is no good in adding extra buffering
-        // here.
-        io::stdout().flush().unwrap();
+        // verus-explorer wasm host: route bytes through the
+        // `__verus_explorer_stdout` extern (defined in
+        // `verus-explorer/src/wasm.rs`) instead of `io::stdout()`,
+        // which on wasm32-unknown-unknown is a no-op.
+        #[cfg(target_arch = "wasm32")]
+        let result: Result<usize, IoError> = {
+            let bytes = ecx.read_bytes_ptr_strip_provenance(ptr, rustc_abi::Size::from_bytes(len))?;
+            unsafe extern "Rust" {
+                fn __verus_explorer_stdout(ptr: *const u8, len: usize);
+            }
+            unsafe { __verus_explorer_stdout(bytes.as_ptr(), bytes.len()) };
+            Ok(bytes.len())
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let result = {
+            let r = ecx.write_to_host(&*self, len, ptr)?;
+            // Stdout is buffered, flush to make sure it appears on the
+            // screen.  This is the write() syscall of the interpreted
+            // program, we want it to correspond to a write() syscall on
+            // the host -- there is no good in adding extra buffering
+            // here.
+            io::stdout().flush().unwrap();
+            r
+        };
 
         finish.call(ecx, result)
     }
@@ -325,6 +342,18 @@ impl FileDescription for io::Stderr {
         finish: DynMachineCallback<'tcx, Result<usize, IoError>>,
     ) -> InterpResult<'tcx> {
         // We allow writing to stderr even with isolation enabled.
+        // verus-explorer wasm host: route through the JS extern (see
+        // analogous comment on `impl FileDescription for io::Stdout`).
+        #[cfg(target_arch = "wasm32")]
+        let result: Result<usize, IoError> = {
+            let bytes = ecx.read_bytes_ptr_strip_provenance(ptr, rustc_abi::Size::from_bytes(len))?;
+            unsafe extern "Rust" {
+                fn __verus_explorer_stderr(ptr: *const u8, len: usize);
+            }
+            unsafe { __verus_explorer_stderr(bytes.as_ptr(), bytes.len()) };
+            Ok(bytes.len())
+        };
+        #[cfg(not(target_arch = "wasm32"))]
         let result = ecx.write_to_host(&*self, len, ptr)?;
         // No need to flush, stderr is not buffered.
         finish.call(ecx, result)

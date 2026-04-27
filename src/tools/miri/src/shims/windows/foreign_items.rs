@@ -27,6 +27,16 @@ fn win_get_full_path_name<'tcx>(path: &Path) -> InterpResult<'tcx, io::Result<Pa
     interp_ok(path::absolute(path))
 }
 
+// verus-explorer: hosting Miri inside wasm32-unknown-unknown. The unix
+// branch below pulls in `rustc_data_structures::fx::FxHashSet` + a non-
+// trivial path-normalization routine; for our use case (no real Windows
+// programs running) we just return Unsupported.
+#[cfg(not(any(unix, windows)))]
+fn win_get_full_path_name<'tcx>(path: &Path) -> InterpResult<'tcx, io::Result<PathBuf>> {
+    let _ = path;
+    interp_ok(Err(io::Error::new(io::ErrorKind::Unsupported, "GetFullPathName not supported on wasm host")))
+}
+
 #[cfg(unix)]
 #[expect(clippy::get_first, clippy::arithmetic_side_effects)]
 fn win_get_full_path_name<'tcx>(path: &Path) -> InterpResult<'tcx, io::Result<PathBuf>> {

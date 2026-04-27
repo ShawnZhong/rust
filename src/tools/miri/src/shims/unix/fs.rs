@@ -513,6 +513,14 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             if src.is_dir() { fs::symlink_dir(src, dst) } else { fs::symlink_file(src, dst) }
         }
 
+        // verus-explorer: hosting Miri inside wasm32-unknown-unknown. Neither
+        // unix nor windows shim impls apply; symlink isolation never fires
+        // because we always reject filesystem operations from the wasm side.
+        #[cfg(not(any(unix, windows)))]
+        fn create_link(_src: &Path, _dst: &Path) -> std::io::Result<()> {
+            Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "symlink not supported on wasm host"))
+        }
+
         let this = self.eval_context_mut();
         let target = this.read_path_from_c_str(this.read_pointer(target_op)?)?;
         let linkpath = this.read_path_from_c_str(this.read_pointer(linkpath_op)?)?;

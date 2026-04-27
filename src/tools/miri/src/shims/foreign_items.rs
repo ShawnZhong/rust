@@ -1,4 +1,7 @@
 use std::collections::hash_map::Entry;
+// verus-explorer: only used in the `cfg(not(target_arch = "wasm32"))`
+// arm of the `miri_write_to_stdout` / `miri_write_to_stderr` shim.
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
 use std::path::Path;
 
@@ -466,12 +469,39 @@ trait EvalContextExtPriv<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 let [msg] = this.check_shim_sig_lenient(abi, CanonAbi::Rust, link_name, args)?;
                 let msg = this.read_immediate(msg)?;
                 let msg = this.read_byte_slice(&msg)?;
-                // Note: we're ignoring errors writing to host stdout/stderr.
-                let _ignore = match link_name.as_str() {
-                    "miri_write_to_stdout" => std::io::stdout().write_all(msg),
-                    "miri_write_to_stderr" => std::io::stderr().write_all(msg),
-                    _ => unreachable!(),
-                };
+                // verus-explorer wasm host: route through the
+                // `__verus_explorer_stdout` / `_stderr` externs (defined
+                // in `verus-explorer/src/wasm.rs`). The host's
+                // `io::stdout()` / `io::stderr()` is a no-op on
+                // wasm32-unknown-unknown, so without this branch every
+                // `miri_write_to_*` call (and the libstd patch in
+                // `library/std/src/sys/stdio/unsupported.rs` that
+                // forwards `print!` here) would silently drop bytes.
+                #[cfg(target_arch = "wasm32")]
+                {
+                    unsafe extern "Rust" {
+                        fn __verus_explorer_stdout(ptr: *const u8, len: usize);
+                        fn __verus_explorer_stderr(ptr: *const u8, len: usize);
+                    }
+                    match link_name.as_str() {
+                        "miri_write_to_stdout" => unsafe {
+                            __verus_explorer_stdout(msg.as_ptr(), msg.len())
+                        },
+                        "miri_write_to_stderr" => unsafe {
+                            __verus_explorer_stderr(msg.as_ptr(), msg.len())
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    // Note: we're ignoring errors writing to host stdout/stderr.
+                    let _ignore = match link_name.as_str() {
+                        "miri_write_to_stdout" => std::io::stdout().write_all(msg),
+                        "miri_write_to_stderr" => std::io::stderr().write_all(msg),
+                        _ => unreachable!(),
+                    };
+                }
             }
             // Promises that a pointer has a given symbolic alignment.
             "miri_promise_symbolic_alignment" => {

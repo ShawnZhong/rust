@@ -363,5 +363,13 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
             // Unix-on-Unix, all is fine.
             os_str
         };
+        // verus-explorer: wasm32-unknown-unknown host has no real
+        // filesystem, and `IsolatedOp::Reject` rejects all FS shims
+        // before this conversion gets called. Pass-through is safe.
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (target_os, direction);
+            return os_str;
+        }
     }
 }
